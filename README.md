@@ -68,6 +68,8 @@ flowchart LR
 
 n8n (self-hosted) · QuickBooks Online API v3 (OAuth2, HTTP Request nodes) · Airtable · Groq `gpt-oss-120b` · IMAP + SMTP · n8n Convert to File (.xlsx)
 
+Workflow JSON written with Claude Code, then imported, run and tested in n8n.
+
 ## Setup
 
 1. Create an Intuit developer app and a sandbox company. In n8n, add these credentials: QuickBooks OAuth2 (sandbox), Airtable personal access token, IMAP, SMTP, Groq.
