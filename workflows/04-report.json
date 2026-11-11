@@ -1,0 +1,323 @@
+{
+  "name": "AI Bookkeeper: Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "d4e5f6a7-0001-4000-8000-000000000001",
+      "name": "Monday 9 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d4e5f6a7-0002-4000-8000-000000000002",
+              "name": "realmId",
+              "value": "PASTE_SANDBOX_COMPANY_ID",
+              "type": "string"
+            },
+            {
+              "id": "d4e5f6a7-0003-4000-8000-000000000003",
+              "name": "baseUrl",
+              "value": "https://sandbox-quickbooks.api.intuit.com",
+              "type": "string"
+            },
+            {
+              "id": "d4e5f6a7-0004-4000-8000-000000000004",
+              "name": "minorVersion",
+              "value": "75",
+              "type": "string"
+            },
+            {
+              "id": "d4e5f6a7-0005-4000-8000-000000000005",
+              "name": "reportTo",
+              "value": "PASTE_REPORT_TO_EMAIL",
+              "type": "string"
+            },
+            {
+              "id": "d4e5f6a7-0006-4000-8000-000000000006",
+              "name": "reportFrom",
+              "value": "PASTE_SMTP_FROM_EMAIL",
+              "type": "string"
+            },
+            {
+              "id": "d4e5f6a7-0007-4000-8000-000000000007",
+              "name": "startDate",
+              "value": "={{ $now.minus({ days: 6 }).toFormat('yyyy-MM-dd') }}",
+              "type": "string"
+            },
+            {
+              "id": "d4e5f6a7-0008-4000-8000-000000000008",
+              "name": "endDate",
+              "value": "={{ $now.toFormat('yyyy-MM-dd') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d4e5f6a7-0009-4000-8000-000000000009",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.baseUrl }}/v3/company/{{ $('Config').first().json.realmId }}/reports/ProfitAndLoss",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "quickBooksOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "start_date",
+              "value": "={{ $('Config').first().json.startDate }}"
+            },
+            {
+              "name": "end_date",
+              "value": "={{ $('Config').first().json.endDate }}"
+            },
+            {
+              "name": "minorversion",
+              "value": "={{ $('Config').first().json.minorVersion }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d4e5f6a7-0010-4000-8000-000000000010",
+      "name": "Get Profit and Loss",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Flatten the QuickBooks Profit and Loss report into one row per line.\nconst r = $input.first().json;\nconst h = r.Header ?? {};\nconst lines = [];\nconst totals = {};\nconst num = v => (v === '' || v == null ? null : Number(v));\n\nfunction walk(rows, section, level) {\n  for (const row of rows ?? []) {\n    if (row.type === 'Section' || row.Rows || row.Summary) {\n      const title = row.Header?.ColData?.[0]?.value || section;\n      if (row.Header) lines.push({ Section: section || title, Account: title, Amount: num(row.Header.ColData?.[1]?.value), Level: level, Type: 'Header' });\n      walk(row.Rows?.Row, section || title, level + 1);\n      if (row.Summary) {\n        const [label, amt] = row.Summary.ColData ?? [];\n        lines.push({ Section: section || title, Account: label?.value ?? '', Amount: num(amt?.value), Level: level, Type: 'Total' });\n        if (row.group) totals[row.group] = num(amt?.value) ?? 0;\n      }\n    } else if (row.ColData) {\n      const [label, amt] = row.ColData;\n      lines.push({ Section: section, Account: label?.value ?? '', Amount: num(amt?.value), Level: level, Type: 'Line' });\n    }\n  }\n}\nwalk(r.Rows?.Row, '', 0);\n\nconst money = v => (v < 0 ? '-$' : '$') + Math.abs(v ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\nconst forLlm = lines\n  .filter(l => l.Amount !== null)\n  .map(l => `${'  '.repeat(l.Level)}${l.Account}: ${money(l.Amount)}${l.Type === 'Total' ? ' (total)' : ''}`)\n  .join('\\n');\n\nreturn [{ json: {\n  start: h.StartPeriod, end: h.EndPeriod, currency: h.Currency ?? 'USD',\n  income: totals.Income ?? 0, expenses: totals.Expenses ?? 0, netIncome: totals.NetIncome ?? 0,\n  incomeText: money(totals.Income ?? 0), expensesText: money(totals.Expenses ?? 0), netText: money(totals.NetIncome ?? 0),\n  lineCount: lines.length, lines, forLlm,\n} }];\n"
+      },
+      "id": "d4e5f6a7-0011-4000-8000-000000000011",
+      "name": "Flatten P&L",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a bookkeeper writing to a small-business owner.\nSummarize this Profit and Loss report for {{ $json.start }} to {{ $json.end }} ({{ $json.currency }}) in exactly 5 short lines of plain English.\n\nRules:\n- Plain text only. No markdown, no bullets, no headings.\n- Use only numbers that appear in the report. Never invent or estimate numbers.\n- Gross Profit, Net Operating Income and Net Income are totals, not income. Income means only the lines in the Income section. If total income is 0 or empty, say no income was recorded.\n- Line 1: net income and whether it is a profit or a loss.\n- Lines 2-4: the biggest income and expense lines and anything unusual.\n- Line 5: one thing worth checking, based only on the data.\n\nReport:\n\"\"\"\n{{ $json.forLlm }}\n\"\"\""
+      },
+      "id": "d4e5f6a7-0012-4000-8000-000000000012",
+      "name": "Write Summary",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "d4e5f6a7-0013-4000-8000-000000000013",
+      "name": "Groq Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        880,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $('Flatten P&L').first().json.lines.map(l => ({ json: {\n  Section: l.Section,\n  Account: '   '.repeat(l.Level) + l.Account,\n  Amount: l.Amount,\n  Type: l.Type,\n} }));"
+      },
+      "id": "d4e5f6a7-0014-4000-8000-000000000014",
+      "name": "Rows for Excel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {
+          "fileName": "=profit-and-loss-{{ $('Flatten P&L').first().json.start }}-to-{{ $('Flatten P&L').first().json.end }}.xlsx",
+          "sheetName": "Profit and Loss",
+          "headerRow": true
+        }
+      },
+      "id": "d4e5f6a7-0015-4000-8000-000000000015",
+      "name": "Convert to Excel",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        300
+      ],
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Config').first().json.reportFrom }}",
+        "toEmail": "={{ $('Config').first().json.reportTo }}",
+        "subject": "=Weekly P&L {{ $('Flatten P&L').first().json.start }} to {{ $('Flatten P&L').first().json.end }}: net income {{ $('Flatten P&L').first().json.netText }}",
+        "emailFormat": "html",
+        "html": "=<h2>Profit and Loss, {{ $('Flatten P&L').first().json.start }} to {{ $('Flatten P&L').first().json.end }}</h2>\n<p>{{ $('Write Summary').first().json.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').split(String.fromCharCode(10)).filter(s => s.trim()).join('<br>') }}</p>\n<table cellpadding=\"6\" style=\"border-collapse:collapse\">\n<tr><td>Total income</td><td><b>{{ $('Flatten P&L').first().json.incomeText }}</b></td></tr>\n<tr><td>Total expenses</td><td><b>{{ $('Flatten P&L').first().json.expensesText }}</b></td></tr>\n<tr><td>Net income</td><td><b>{{ $('Flatten P&L').first().json.netText }}</b></td></tr>\n</table>\n<p>Full report attached (.xlsx). Source: QuickBooks Online. Summary written by AI from the report numbers only.</p>",
+        "options": {
+          "attachments": "data",
+          "appendAttribution": false
+        }
+      },
+      "id": "d4e5f6a7-0016-4000-8000-000000000016",
+      "name": "Email Report",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        300
+      ],
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Monday 9 AM": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get Profit and Loss",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Profit and Loss": {
+      "main": [
+        [
+          {
+            "node": "Flatten P&L",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten P&L": {
+      "main": [
+        [
+          {
+            "node": "Write Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Summary": {
+      "main": [
+        [
+          {
+            "node": "Rows for Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rows for Excel": {
+      "main": [
+        [
+          {
+            "node": "Convert to Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to Excel": {
+      "main": [
+        [
+          {
+            "node": "Email Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write Summary",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Dhaka"
+  },
+  "pinData": {}
+}
